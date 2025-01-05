@@ -69,13 +69,13 @@ namespace openthermgw {
         {
             for(OverrideBinarySwitchInfo *pOverride: *pBinaryOverrideList)
             {
-                if(pOverride->binaryswitch->state && pOverride->valueswitch != nullptr)
+                if((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valueswitch != nullptr)
                 {
                     unsigned short origbitfield = mOT->getUInt(request);
                     bool origvalue = origbitfield & (1<<(pOverride->bit - 1));
                     if(origvalue != pOverride->valueswitch->state)
                     {
-                        ESP_LOGD(TAG, "Overriding bit %d (was %d, overriding to %d)", pOverride->bit, origvalue, pOverride->valueswitch->state);
+                        ESP_LOGD(TAG, "Overriding request bit %d (was %d, overriding to %d)", pOverride->bit, origvalue, pOverride->valueswitch->state);
                     }
                     unsigned short newbitfield = (origbitfield & (0xffff - (1<<(pOverride->bit - 1)))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
                     request = mOT->buildRequest(mOT->getMessageType(request), mOT->getDataID(request), newbitfield);
@@ -90,13 +90,13 @@ namespace openthermgw {
         {
             for(OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
             {
-                if(pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
+                if((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
                 {
                     unsigned short origdata = requestDataValue;
                     unsigned short newdata = convert_to_data(pOverride->valuenumber->state, pOverride->valueType);
                     if(origdata != newdata)
                     {
-                        ESP_LOGD(TAG, "Overriding value (was %d, overriding to %d (%d))", origdata, pOverride->valuenumber->state, newdata);
+                        ESP_LOGD(TAG, "Overriding request value (was %d, overriding to %d (%d))", origdata, pOverride->valuenumber->state, newdata);
                     }
                     request = mOT->buildRequest(mOT->getMessageType(request), mOT->getDataID(request), newdata);
                 }
@@ -193,6 +193,58 @@ namespace openthermgw {
         // process response if valid
         if (response && !sOT->parity(response))
         {
+            // override numeric
+            auto itNumericOverrideList = override_numeric_switch_map.find(requestDataID);
+            std::vector<OverrideNumericSwitchInfo *> *pNumericOverrideList = itNumericOverrideList != override_numeric_switch_map.end() ? itNumericOverrideList->second : nullptr;
+            if(pNumericOverrideList != nullptr)
+            {
+                for(OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
+                {
+                    if((pOverride->valueOnRequest == false) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
+                    {
+                        ESP_LOGD(TAG, "Opentherm original response [MessageType: %s, DataID: %d, Data: %x]", sOT->messageTypeToString(sOT->getMessageType(response)), sOT->getDataID(response), response&0xffff);
+                        unsigned long response_org = response;
+                        
+                        unsigned short origdata = requestDataValue;
+                        unsigned short newdata = convert_to_data(pOverride->valuenumber->state, pOverride->valueType);
+                        if(origdata != newdata)
+                        {
+                            ESP_LOGD(TAG, "Overriding response value (was %d, overriding to %d (%d))", origdata, pOverride->valuenumber->state, newdata);
+                        }
+
+                        OpenThermMessageType new_message_type = sOT->getMessageType(response);
+                        switch(mOT->getMessageType(request))
+                        {
+                            case READ_DATA:
+                            {
+                                new_message_type = READ_ACK;
+                                break;
+                            }
+                            case WRITE_DATA:
+                            {
+                                new_message_type = WRITE_ACK;
+                                break;
+                            }
+                            default:
+                            {
+                                break;
+                            }
+                        }
+
+                        response = sOT->buildResponse(new_message_type, sOT->getDataID(response), newdata);
+
+                        // check validity of modified response
+                        if(!sOT->isValidResponse(response))
+                        {
+                          ESP_LOGD(TAG, "Overriding response failed. Returning original response.");
+                          response = response_org;
+                        }
+
+
+                    }
+                }
+            }
+
             sOT->sendResponse(response);
             ESP_LOGD(TAG, "Opentherm response [MessageType: %s, DataID: %d, Data: %x]", sOT->messageTypeToString(sOT->getMessageType(response)), sOT->getDataID(response), response&0xffff);
 
