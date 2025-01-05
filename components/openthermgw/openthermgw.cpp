@@ -48,7 +48,7 @@ namespace openthermgw {
         // Check validity of the original request
         if(status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
         {
-            ESP_LOGD(TAG, "Opentherm request with bad parity discarted."));
+            ESP_LOGD(TAG, "Opentherm request with bad parity discarted.");
             return;
         }
 
@@ -96,7 +96,7 @@ namespace openthermgw {
         // check validity of modified request
         if(!mOT->isValidRequest(request))
         {
-            ESP_LOGD(TAG, "Opentherm request is not valied and is discarted."));
+            ESP_LOGD(TAG, "Opentherm request is not valied and is discarted.");
             return;
         }
 
@@ -187,10 +187,14 @@ namespace openthermgw {
                     }
                 }
             }
+            else
+            {
+                ESP_LOGD(TAG, "Opentherm response invalid.");
+            }
         }
         else
         {
-            ESP_LOGD(TAG, "Opentherm - no response or bad parity"));
+            ESP_LOGD(TAG, "Opentherm - no response or bad parity");
         }
     }
 
