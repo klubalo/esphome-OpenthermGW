@@ -47,7 +47,10 @@ namespace openthermgw {
         
         // Check validity of the original request
         if(status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
+        {
+            ESP_LOGD(TAG, "Opentherm request with bad parity discarted."));
             return;
+        }
 
         // override binary
         auto itBinaryOverrideList = override_binary_switch_map.find(requestDataID);
@@ -64,7 +67,7 @@ namespace openthermgw {
                     {
                         ESP_LOGD(TAG, "Overriding bit %d (was %d, overriding to %d)", pOverride->bit, origvalue, pOverride->valueswitch->state);
                     }
-                    unsigned short newbitfield = origbitfield & (0xffff - (1<<(pOverride->bit - 1))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
+                    unsigned short newbitfield = (origbitfield & (0xffff - (1<<(pOverride->bit - 1)))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
                     request = mOT->buildRequest(mOT->getMessageType(request), mOT->getDataID(request), newbitfield);
                 }
             }
@@ -92,7 +95,10 @@ namespace openthermgw {
 
         // check validity of modified request
         if(!mOT->isValidRequest(request))
+        {
+            ESP_LOGD(TAG, "Opentherm request is not valied and is discarted."));
             return;
+        }
 
         // Send the request
         unsigned long response = mOT->sendRequest(request);
@@ -181,6 +187,10 @@ namespace openthermgw {
                     }
                 }
             }
+        }
+        else
+        {
+            ESP_LOGD(TAG, "Opentherm - no response or bad parity"));
         }
     }
 
