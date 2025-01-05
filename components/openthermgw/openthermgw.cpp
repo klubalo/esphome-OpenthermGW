@@ -41,15 +41,25 @@ namespace openthermgw {
         unsigned char requestDataID = mOT->getDataID(request);
         unsigned char requestMessageType = mOT->getMessageType(request);
         unsigned short requestDataValue = request & 0xffff;
-
+        bool invalid_data = false;
 
         ESP_LOGD(TAG, "Opentherm request [MessageType: %s, DataID: %d, Data: %x, status %s]", mOT->messageTypeToString(mOT->getMessageType(request)), requestDataID, requestDataValue, sOT->statusToString(status));
         
         // Check validity of the original request
         if(status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
         {
-            ESP_LOGD(TAG, "Opentherm request with bad parity discarted."));
-            return;
+            if (mOT->getMessageType(request) == INVALID_DATA)
+            {
+                // A data item to be sent by the master may be invalid in a particular application, but may still require to be sent.
+                // In this case the master may use the message type ‘data invalid’.
+                ESP_LOGD(TAG, "Opentherm request with INVALID_DATA. [RawData: %x]", request);
+                invalid_data = true;
+            }
+            else
+            {
+                ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: %x]", request);
+                return;
+            }
         }
 
         // override binary
@@ -94,10 +104,87 @@ namespace openthermgw {
         }
 
         // check validity of modified request
-        if(!mOT->isValidRequest(request))
+        if(!mOT->isValidRequest(request) && !invalid_data)
         {
-            ESP_LOGD(TAG, "Opentherm request is not valied and is discarted."));
+            ESP_LOGD(TAG, "Opentherm request is not valid and is discarted.");
             return;
+        }
+
+        auto itSensorList = acme_sensor_map.find(mOT->getDataID(request));
+        std::vector<AcmeSensorInfo *> *pSensorList = itSensorList != acme_sensor_map.end() ? itSensorList->second : nullptr;
+        if(pSensorList != nullptr)
+        {
+            for(AcmeSensorInfo *pSensorInfo: *pSensorList)
+            {
+                if (pSensorInfo->valueOnRequest == true)
+                {
+                    switch(pSensorInfo->valueType)
+                    {
+                        case 0: // u16
+                        {
+                            unsigned short value = mOT->getUInt(request);
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 1: // s16
+                        {
+                            short value = request & 0xffff;
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 2: // f16
+                        {
+                            float value = mOT->getFloat(request);
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 3: // u8LB
+                        {
+                            unsigned char value = request & 0x00ff;
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 4: // u8HB
+                        {
+                            unsigned char value = (request & 0xff00) >> 8;
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 5: // s8LB
+                        {
+                            signed char value = request & 0x00ff;
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 6: // s8HB
+                        {
+                            signed char value = (request & 0xff00) >> 8;
+                            pSensorInfo->acmeSensor->publish_state(value);
+                            break;
+                        }
+                        case 7: // RESPONSE
+                        {
+                            pSensorInfo->acmeSensor->publish_state((request >> 28) & 7);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // acme binary
+        auto itBinarySensorList = acme_binary_sensor_map.find(mOT->getDataID(request));
+        std::vector<AcmeBinarySensorInfo *> *pBinarySensorList = itBinarySensorList != acme_binary_sensor_map.end() ? itBinarySensorList->second : nullptr;
+        if(pBinarySensorList != nullptr)
+        {
+            for(AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
+            {
+                if (pBinarySensorInfo->valueOnRequest == true)
+                {
+                    bool bitvalue = mOT->getUInt(request) & (1<<(pBinarySensorInfo->bit - 1));
+                    pBinarySensorInfo->acmeSensor->publish_state(bitvalue);
+                }
+            }
         }
 
         // Send the request
@@ -121,57 +208,59 @@ namespace openthermgw {
                 {
                     for(AcmeSensorInfo *pSensorInfo: *pSensorList)
                     {
-                        switch(pSensorInfo->valueType)
+                        if (pSensorInfo->valueOnRequest == false)
                         {
-                            case 0: // u16
+                            switch(pSensorInfo->valueType)
                             {
-                                unsigned short value = sOT->getUInt(response);
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 1: // s16
-                            {
-                                short value = response & 0xffff;
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 2: // f16
-                            {
-                                float value = sOT->getFloat(response);
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 3: // u8LB
-                            {
-                                unsigned char value = response & 0x00ff;
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 4: // u8HB
-                            {
-                                unsigned char value = (response & 0xff00) >> 8;
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 5: // s8LB
-                            {
-                                signed char value = response & 0x00ff;
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 6: // s8HB
-                            {
-                                signed char value = (response & 0xff00) >> 8;
-                                pSensorInfo->acmeSensor->publish_state(value);
-                                break;
-                            }
-                            case 7: // RESPONSE
-                            {
-                                pSensorInfo->acmeSensor->publish_state((response >> 28) & 7);
-                                break;
+                                case 0: // u16
+                                {
+                                    unsigned short value = sOT->getUInt(response);
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 1: // s16
+                                {
+                                    short value = response & 0xffff;
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 2: // f16
+                                {
+                                    float value = sOT->getFloat(response);
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 3: // u8LB
+                                {
+                                    unsigned char value = response & 0x00ff;
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 4: // u8HB
+                                {
+                                    unsigned char value = (response & 0xff00) >> 8;
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 5: // s8LB
+                                {
+                                    signed char value = response & 0x00ff;
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 6: // s8HB
+                                {
+                                    signed char value = (response & 0xff00) >> 8;
+                                    pSensorInfo->acmeSensor->publish_state(value);
+                                    break;
+                                }
+                                case 7: // RESPONSE
+                                {
+                                    pSensorInfo->acmeSensor->publish_state((response >> 28) & 7);
+                                    break;
+                                }
                             }
                         }
-
                     }
                 }
 
@@ -182,15 +271,22 @@ namespace openthermgw {
                 {
                     for(AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
                     {
-                        bool bitvalue = sOT->getUInt(response) & (1<<(pBinarySensorInfo->bit - 1));
-                        pBinarySensorInfo->acmeSensor->publish_state(bitvalue);
+                        if (pBinarySensorInfo->valueOnRequest == false)
+                        {
+                            bool bitvalue = sOT->getUInt(response) & (1<<(pBinarySensorInfo->bit - 1));
+                            pBinarySensorInfo->acmeSensor->publish_state(bitvalue);
+                        }
                     }
                 }
+            }
+            else
+            {
+                ESP_LOGD(TAG, "Opentherm response invalid.");
             }
         }
         else
         {
-            ESP_LOGD(TAG, "Opentherm - no response or bad parity"));
+            ESP_LOGD(TAG, "Opentherm - no response or bad parity");
         }
     }
 
@@ -365,7 +461,7 @@ namespace openthermgw {
 
     void OpenthermGW::loop()
     {
-        sOT->process();        
+        sOT->process();
     }
 
 
