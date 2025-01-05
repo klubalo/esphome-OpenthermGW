@@ -38,83 +38,36 @@ namespace openthermgw {
 
     void OpenthermGW::processRequest(unsigned long request, OpenThermResponseStatus status)
     {
-        unsigned char requestDataID = mOT->getDataID(request);
-        unsigned char requestMessageType = mOT->getMessageType(request);
-        unsigned short requestDataValue = request & 0xffff;
-        bool invalid_data = false;
+        OpenThermMessageID   requestDataID = mOT->getDataID(request);
+        OpenThermMessageType requestMessageType = mOT->getMessageType(request);
+        unsigned short       requestDataValue = request & 0xffff;
+        bool requestOverride = false;
 
-        ESP_LOGD(TAG, "Opentherm request [MessageType: %s, DataID: %d, Data: %x, status %s]", mOT->messageTypeToString(mOT->getMessageType(request)), requestDataID, requestDataValue, sOT->statusToString(status));
+        ESP_LOGD(TAG, "Opentherm request [MessageType: %s, DataID: %d, Data: 0x%x, status %s]", mOT->messageTypeToString(requestMessageType), requestDataID, requestDataValue, sOT->statusToString(status));
         
         // Check validity of the original request
-        if(status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
+        if (status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
         {
-            if (mOT->getMessageType(request) == INVALID_DATA)
+            if (requestMessageType == INVALID_DATA)
             {
                 // A data item to be sent by the master may be invalid in a particular application, but may still require to be sent.
                 // In this case the master may use the message type ‘data invalid’.
-                ESP_LOGD(TAG, "Opentherm request with INVALID_DATA. [RawData: %x]", request);
-                invalid_data = true;
+                ESP_LOGD(TAG, "Opentherm request with INVALID_DATA. [RawData: 0x%x]", request);
             }
             else
             {
-                ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: %x]", request);
+                // Discard corrupted request.
+                ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: 0x%x]", request);
                 return;
             }
         }
 
-        // override binary
-        auto itBinaryOverrideList = override_binary_switch_map.find(requestDataID);
-        std::vector<OverrideBinarySwitchInfo *> *pBinaryOverrideList =  itBinaryOverrideList != override_binary_switch_map.end() ? itBinaryOverrideList->second : nullptr;
-        if(pBinaryOverrideList != nullptr)
-        {
-            for(OverrideBinarySwitchInfo *pOverride: *pBinaryOverrideList)
-            {
-                if((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valueswitch != nullptr)
-                {
-                    unsigned short origbitfield = mOT->getUInt(request);
-                    bool origvalue = origbitfield & (1<<(pOverride->bit - 1));
-                    if(origvalue != pOverride->valueswitch->state)
-                    {
-                        ESP_LOGD(TAG, "Overriding request bit %d (was %d, overriding to %d)", pOverride->bit, origvalue, pOverride->valueswitch->state);
-                    }
-                    unsigned short newbitfield = (origbitfield & (0xffff - (1<<(pOverride->bit - 1)))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
-                    request = mOT->buildRequest(mOT->getMessageType(request), mOT->getDataID(request), newbitfield);
-                }
-            }
-        }
-
-        // override numeric
-        auto itNumericOverrideList = override_numeric_switch_map.find(requestDataID);
-        std::vector<OverrideNumericSwitchInfo *> *pNumericOverrideList = itNumericOverrideList != override_numeric_switch_map.end() ? itNumericOverrideList->second : nullptr;
-        if(pNumericOverrideList != nullptr)
-        {
-            for(OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
-            {
-                if((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
-                {
-                    unsigned short origdata = requestDataValue;
-                    unsigned short newdata = convert_to_data(pOverride->valuenumber->state, pOverride->valueType);
-                    if(origdata != newdata)
-                    {
-                        ESP_LOGD(TAG, "Overriding request value (was %d, overriding to %d (%d))", origdata, pOverride->valuenumber->state, newdata);
-                    }
-                    request = mOT->buildRequest(mOT->getMessageType(request), mOT->getDataID(request), newdata);
-                }
-            }
-        }
-
-        // check validity of modified request
-        if(!mOT->isValidRequest(request) && !invalid_data)
-        {
-            ESP_LOGD(TAG, "Opentherm request is not valid and is discarted.");
-            return;
-        }
-
-        auto itSensorList = acme_sensor_map.find(mOT->getDataID(request));
+        // Process numeric value on request (Set value received from thermostat)
+        auto itSensorList = acme_sensor_map.find(requestDataID);
         std::vector<AcmeSensorInfo *> *pSensorList = itSensorList != acme_sensor_map.end() ? itSensorList->second : nullptr;
-        if(pSensorList != nullptr)
+        if (pSensorList != nullptr)
         {
-            for(AcmeSensorInfo *pSensorInfo: *pSensorList)
+            for (AcmeSensorInfo *pSensorInfo: *pSensorList)
             {
                 if (pSensorInfo->valueOnRequest == true)
                 {
@@ -172,12 +125,12 @@ namespace openthermgw {
             }
         }
 
-        // acme binary
-        auto itBinarySensorList = acme_binary_sensor_map.find(mOT->getDataID(request));
+        // Process binary value on request  (Set value received from thermostat)
+        auto itBinarySensorList = acme_binary_sensor_map.find(requestDataID);
         std::vector<AcmeBinarySensorInfo *> *pBinarySensorList = itBinarySensorList != acme_binary_sensor_map.end() ? itBinarySensorList->second : nullptr;
-        if(pBinarySensorList != nullptr)
+        if (pBinarySensorList != nullptr)
         {
-            for(AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
+            for (AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
             {
                 if (pBinarySensorInfo->valueOnRequest == true)
                 {
@@ -187,78 +140,164 @@ namespace openthermgw {
             }
         }
 
+        // Override binary value on request (Replace value received from thermostat)
+        auto itBinaryOverrideList = override_binary_switch_map.find(requestDataID);
+        std::vector<OverrideBinarySwitchInfo *> *pBinaryOverrideList =  itBinaryOverrideList != override_binary_switch_map.end() ? itBinaryOverrideList->second : nullptr;
+        if (pBinaryOverrideList != nullptr)
+        {
+            for (OverrideBinarySwitchInfo *pOverride: *pBinaryOverrideList)
+            {
+                if ((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valueswitch != nullptr)
+                {
+                    unsigned short origbitfield = mOT->getUInt(request);
+                    bool origvalue = origbitfield & (1<<(pOverride->bit - 1));
+                    if(origvalue != pOverride->valueswitch->state)
+                    {
+                        unsigned short newbitfield = (origbitfield & (0xffff - (1<<(pOverride->bit - 1)))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
+                        request = mOT->buildRequest(requestMessageType, requestDataID, newbitfield);
+                        requestOverride = true;
+                    }
+
+                }
+            }
+        }
+
+        // Override numeric on request (Replace value received from thermostat)
+        auto itNumericOverrideList = override_numeric_switch_map.find(requestDataID);
+        std::vector<OverrideNumericSwitchInfo *> *pNumericOverrideList = itNumericOverrideList != override_numeric_switch_map.end() ? itNumericOverrideList->second : nullptr;
+        if(pNumericOverrideList != nullptr)
+        {
+            for(OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
+            {
+                if((pOverride->valueOnRequest == true) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
+                {
+                    unsigned short origdata = request & 0xffff;
+                    unsigned short newdata = convert_to_data(pOverride->valuenumber->state, pOverride->valueType);
+                    if(origdata != newdata)
+                    {
+                        request = mOT->buildRequest(requestMessageType, requestDataID, newdata);
+                        requestOverride = true;
+                    }
+                }
+            }
+        }
+
+        // Check validity of modified request
+        if (requestOverride && !mOT->isValidRequest(request) && (requestMessageType != INVALID_DATA))
+        {
+            ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: 0x%x]", request);
+            return;
+        }
+
+        if (requestOverride)
+        {
+            ESP_LOGD(TAG, "Opentherm request override [MessageType: %s, DataID: %d, Data: 0x%x]", mOT->messageTypeToString(mOT->getMessageType(request)), mOT->getDataID(request), request & 0xffff);
+        }
+
         // Send the request
         unsigned long response = mOT->sendRequest(request);
 
-        // process response if valid
+        // Process response only if valid
         if (response && !sOT->parity(response))
         {
-            // override numeric
+            OpenThermMessageID   responseDataID = sOT->getDataID(response);
+            OpenThermMessageType responseMessageType = sOT->getMessageType(response);
+            unsigned short       responseDataValue = response & 0xffff;
+            unsigned long        responseOrg = response;
+            bool                 responseOverride = false;
+
+            ESP_LOGD(TAG, "Opentherm response [MessageType: %s, DataID: %d, Data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
+
+            // Override numeric on response (Replace value received from boiler)
             auto itNumericOverrideList = override_numeric_switch_map.find(requestDataID);
             std::vector<OverrideNumericSwitchInfo *> *pNumericOverrideList = itNumericOverrideList != override_numeric_switch_map.end() ? itNumericOverrideList->second : nullptr;
-            if(pNumericOverrideList != nullptr)
+            if (pNumericOverrideList != nullptr)
             {
-                for(OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
+                for (OverrideNumericSwitchInfo *pOverride: *pNumericOverrideList)
                 {
-                    if((pOverride->valueOnRequest == false) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
+                    if ((pOverride->valueOnRequest == false) && pOverride->binaryswitch->state && pOverride->valuenumber != nullptr)
                     {
-                        ESP_LOGD(TAG, "Opentherm original response [MessageType: %s, DataID: %d, Data: %x]", sOT->messageTypeToString(sOT->getMessageType(response)), sOT->getDataID(response), response&0xffff);
-                        unsigned long response_org = response;
-                        
-                        unsigned short origdata = requestDataValue;
+                        unsigned short origdata = response & 0xffff;
                         unsigned short newdata = convert_to_data(pOverride->valuenumber->state, pOverride->valueType);
-                        if(origdata != newdata)
+                        if (origdata != newdata)
                         {
-                            ESP_LOGD(TAG, "Overriding response value (was %d, overriding to %d (%d))", origdata, pOverride->valuenumber->state, newdata);
+                            response = sOT->buildResponse(responseMessageType, responseDataID, newdata);
+                            responseOverride = true;
                         }
-
-                        OpenThermMessageType new_message_type = sOT->getMessageType(response);
-                        switch(mOT->getMessageType(request))
-                        {
-                            case READ_DATA:
-                            {
-                                new_message_type = READ_ACK;
-                                break;
-                            }
-                            case WRITE_DATA:
-                            {
-                                new_message_type = WRITE_ACK;
-                                break;
-                            }
-                            default:
-                            {
-                                break;
-                            }
-                        }
-
-                        response = sOT->buildResponse(new_message_type, sOT->getDataID(response), newdata);
-
-                        // check validity of modified response
-                        if(!sOT->isValidResponse(response))
-                        {
-                          ESP_LOGD(TAG, "Overriding response failed. Returning original response.");
-                          response = response_org;
-                        }
-
-
                     }
                 }
             }
 
+            // Override binary value on response (Replace value received from boiler)
+            auto itBinaryOverrideList = override_binary_switch_map.find(requestDataID);
+            std::vector<OverrideBinarySwitchInfo *> *pBinaryOverrideList =  itBinaryOverrideList != override_binary_switch_map.end() ? itBinaryOverrideList->second : nullptr;
+            if (pBinaryOverrideList != nullptr)
+            {
+                for (OverrideBinarySwitchInfo *pOverride: *pBinaryOverrideList)
+                {
+                    if ((pOverride->valueOnRequest == false) && pOverride->binaryswitch->state && pOverride->valueswitch != nullptr)
+                    {
+                        unsigned short origbitfield = mOT->getUInt(response);
+                        bool origvalue = origbitfield & (1<<(pOverride->bit - 1));
+                        if(origvalue != pOverride->valueswitch->state)
+                        {
+                            unsigned short newbitfield = (origbitfield & (0xffff - (1<<(pOverride->bit - 1)))) | (pOverride->valueswitch->state << (pOverride->bit - 1));
+                            response = sOT->buildResponse(responseMessageType, responseDataID, newbitfield);
+                            responseOverride = true;
+                        }
+                    }
+                }
+            }
+
+            if (responseOverride)
+            {
+                // Boiler can respond with DATA_INVALID or UNKNOWN_DATA_ID
+                // When we are replacing values, we likely also need to change message type to READ_ACK or WRITE_ACK
+                switch(mOT->getMessageType(request))
+                {
+                    case READ_DATA:
+                    {
+                        responseMessageType = READ_ACK;
+                        break;
+                    }
+                    case WRITE_DATA:
+                    {
+                        responseMessageType = WRITE_ACK;
+                        break;
+                    }
+                    default:
+                    {
+                        break;
+                    }
+                }
+
+                response = sOT->buildResponse(responseMessageType, responseDataID, response & 0xffff);
+
+                // check validity of modified response
+                if(!sOT->isValidResponse(response))
+                {
+                    ESP_LOGD(TAG, "Overriding response failed. Returning original response.");
+                    response = responseOrg;
+                }
+                else
+                {
+                    ESP_LOGD(TAG, "Opentherm response override [MessageType: %s, DataID: %d, Data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
+                }
+            }
+
             sOT->sendResponse(response);
-            ESP_LOGD(TAG, "Opentherm response [MessageType: %s, DataID: %d, Data: %x]", sOT->messageTypeToString(sOT->getMessageType(response)), sOT->getDataID(response), response&0xffff);
 
             // only if ACK reponse is received, process the data.
-            if(sOT->isValidResponse(response))
+            if (sOT->isValidResponse(response))
             {
                 ESP_LOGD(TAG, "Opentherm response valid, processing sensors...");
-                
-                // acme
-                auto itSensorList = acme_sensor_map.find(sOT->getDataID(response));
+
+                // Process numeric value on response  (Set value received from boiler)
+                auto itSensorList = acme_sensor_map.find(responseDataID);
                 std::vector<AcmeSensorInfo *> *pSensorList = itSensorList != acme_sensor_map.end() ? itSensorList->second : nullptr;
-                if(pSensorList != nullptr)
+                if (pSensorList != nullptr)
                 {
-                    for(AcmeSensorInfo *pSensorInfo: *pSensorList)
+                    for (AcmeSensorInfo *pSensorInfo: *pSensorList)
                     {
                         if (pSensorInfo->valueOnRequest == false)
                         {
@@ -316,12 +355,12 @@ namespace openthermgw {
                     }
                 }
 
-                // acme binary
-                auto itBinarySensorList = acme_binary_sensor_map.find(sOT->getDataID(response));
+                // Process binary value on response  (Set value received from boiler)
+                auto itBinarySensorList = acme_binary_sensor_map.find(responseDataID);
                 std::vector<AcmeBinarySensorInfo *> *pBinarySensorList = itBinarySensorList != acme_binary_sensor_map.end() ? itBinarySensorList->second : nullptr;
-                if(pBinarySensorList != nullptr)
+                if (pBinarySensorList != nullptr)
                 {
-                    for(AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
+                    for (AcmeBinarySensorInfo *pBinarySensorInfo: *pBinarySensorList)
                     {
                         if (pBinarySensorInfo->valueOnRequest == false)
                         {
