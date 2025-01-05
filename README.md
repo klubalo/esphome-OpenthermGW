@@ -1,21 +1,19 @@
 # OpenthermGW for ESPHome / Home assistant
  
-(as External component, by Reproduktor)
+(as External component, by Reproduktor, klubalo)
 
 ## Welcome!
 
 I have two main requirements to solve:
-1. I want to monitor what my QAA73 thermostat & Geminox THRi-DC boiler are up to
-2. I want to be able to override some settings at occasion. For example, I want to control the hot water circulating pump on my own.
+1. I want to monitor what my thermostat & boiler are up to
+2. I want to be able to control DHW temperature and control boiler heat period
 
+It's derived from [Reproduktor/esphome-OpenthermGW](https://github.com/Reproduktor/esphome-OpenthermGW) as I found his implementation simple and easy to expand.
 
-For some time, I've been using this [Opentherm Arduino shield from Jiří Praus](https://www.tindie.com/products/jiripraus/opentherm-gateway-arduino-shield/). I had it connected with an ESP8266-based board and using [Jiří's Arduino library](https://github.com/jpraus/arduino-opentherm) I added some MQTT communication to report the values and show them in my Home Assistant. I added OTA, so it was a practically usable solution. Once I was able to read the values, I let the project sleep and did not get to extend it for overriding the values.
+I needed **value_on_request** to work as my boiler doesn't accept T_Set and room temperature from thermostat - Boiler replies with **UNKNOWN-DATAID** to those write requests.
 
-When the time finally came, I wished I could somehow port this to ESPHome. The ecosystem gives you lots for free, native Home Assistant API support is seamless. And here goes this project. It is still only in its beginning, please create an Issue if you observe a problem, or want the functionality extended. If you get me a coffee, I may be more willing to do something about it 😊
+**value_on_request** also works for override values so it can be used for overriding requests from thermostat for controlling boiler (this was already implemented by Reproduktor) and also for overriding responses from boiler. This functionality can be used for
 
-[<img src="assorted/bmc_qr.png" width="150" height="150">](https://www.buymeacoffee.com/reproduktor)
-
-A code cleanup is needed - noted.
 
 ## Acknowledgement
 Ihor Myealnik's [Opentherm library](https://github.com/ihormelnyk/opentherm_library) is used by this component.
@@ -28,19 +26,20 @@ The gateway is an ESPHome external component. To use it, you only need to includ
 
 ```yaml
 external_components:
-  - source: github://Reproduktor/esphome-openthermgw
+  - source: github://klubalo/esphome-openthermgw@main
     components: [ openthermgw ]
 ```
 
 ### Hardware configuration
 You need to configure the pins, on which the Opentherm gateway is connected. Please note - `master` is the thermostat end, `slave` is the boiler end.
+Here is example for "sandwitch" of d1_mini between [TheHogNL master shield](https://www.tindie.com/products/thehognl/opentherm-master-shield-for-wemoslolin/) and [TheHogNL slave shield](https://www.tindie.com/products/thehognl/opentherm-slave-shield-for-wemoslolin/)
 
 ```yaml
 openthermgw:
-  master_in_pin: 19
-  master_out_pin: 17
-  slave_in_pin: 18
-  slave_out_pin: 16
+  master_in_pin: 4
+  master_out_pin: 5
+  slave_in_pin: 12
+  slave_out_pin: 14
 ```
 
 ### Sensors - preface
@@ -52,28 +51,28 @@ For the numeric sensors, you can create a list like this:
 
 ```yaml
   acme_opentherm_sensor_list:
-    - name: "ACME Control setpoint"
+    - name: "Control setpoint"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 1
       value_on_request: false
       value_type: 2
-    - name: "ACME Control setpoint 2"
+    - name: "Control setpoint 2"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 8
       value_on_request: false
       value_type: 2
-    - name: "ACME Room setpoint"
+    - name: "Room setpoint"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 16
-      value_on_request: false
+      value_on_request: true
       value_type: 2
-    - name: "ACME Relative modulation level"
+    - name: "Relative modulation level"
       device_class: "signal_strength"
       accuracy_decimals: 0
       unit_of_measurement: "%"
@@ -105,7 +104,7 @@ Sensor variables are inherited from ESPHome [Sensor component](https://esphome.i
       - 5 WRITE-ACK
       - 6 DATA-INVALID
       - 7 UNKNOWN-DATAID
-- **value_on_request** (*Optional*, boolean, default `False`): **Only `False` is supported at the moment. `True` does not have any effect.** If `false`, the value is read from the slave (boiler) response message. If `true`, the value is read from the master (thermostat) request message.
+- **value_on_request** (*Optional*, boolean, default `False`): If `false`, the value is read from the slave (boiler) response message (before response override). If `true`, the value is read from the master (thermostat) request message (before request override).
 
 ### Adding binary sensors
 
@@ -113,19 +112,19 @@ Binary sensors are added like this:
 
 ```yaml
   acme_opentherm_binary_sensors:
-    - name: "ACME Boiler fault"
+    - name: "Boiler fault"
       message_id: 0
       value_on_request: false
       bitindex: 1
-    - name: "ACME Boiler CH mode"
+    - name: "Boiler CH mode"
       message_id: 0
       value_on_request: false
       bitindex: 2
-    - name: "ACME Boiler DHW mode"
+    - name: "Boiler DHW mode"
       message_id: 0
       value_on_request: false
       bitindex: 3
-    - name: "ACME Boiler flame status"
+    - name: "Boiler flame status"
       message_id: 0
       value_on_request: false
       bitindex: 4
@@ -137,7 +136,7 @@ Sensor variables are inherited from ESPHome [Binary sensor component](https://es
 
 - **message_id** (*Required*, positive int): Opentherm Message ID to capture in the sensor
 - **bitindex** (*Required*, positive int range 1-16): The bitindex from the right (lsb) of the message data.
-- **value_on_request** (*Optional*, boolean, default `False`): **Only `False` is supported at the moment. `True` does not have any effect.** If `false`, the value is read from the slave (boiler) response message. If `true`, the value is read from the master (thermostat) request message.
+- **value_on_request** (*Optional*, boolean, default `False`): If `false`, the value is read from the slave (boiler) response message (after response override). If `true`, the value is read from the master (thermostat) request message (before request override).
 
 ### Overriding binary sensors
 
@@ -145,15 +144,15 @@ You can add an override switch like this:
 
 ```yaml
   acme_opentherm_override_binary_switches:
-    - name: "OT override DHW circulating pump"
-      message_id: 129
-      value_on_request: true
-      bitindex: 4
+    - name: "Enable override DHW command"
+      message_id: 0
+      value_on_request: true # Modify value from Thermostat to boiler
+      bitindex: 10
       acme_opentherm_override_binary_value:
-        name: "OT override DHW circulating pump with"
+        name: "Override DHW control command"
 ```
 
-This example creates two switches: `OT override DHW circulating pump` is the switch which controls, if the value in the given message is overriden, and the `OT override DHW circulating pump with` switch specifies the value to override the data with. *(Note that this example is for Geminox THRi boiler, the message ID is proprietary and not according to Opentherm standard.)*
+This example creates two switches: `Enable override DHW command` is the switch which controls, if the value in the given message is overriden, and the `Override DHW control command` switch specifies the value to override the data with.
 
 #### Configuration variables
 
@@ -161,68 +160,105 @@ For every message yyou wish to override, configure an independent switch to cont
 
 - **message_id** (*Required*, positive int): Opentherm Message ID to capture in the sensor
 - **bitindex** (*Required*, positive int range 1-16): The bitindex from the right (lsb) of the message data.
-- **value_on_request** (*Optional*, boolean, default `True`): **Only `True` is supported at the moment. `False` does not have any effect.** If `false`, the value is overriden in the slave (boiler) response message. If `true`, the value is overriden in the master (thermostat) request message.
+- **value_on_request** (*Optional*, boolean, default `True`): If `false`, the value is overriden in the slave (boiler) response message (before sensor value is reported). If `true`, the value is overriden in the master (thermostat) request message (after sensor value is reported).
 - **acme_opentherm_override_binary_value** (*Required*, Switch): Secondary switch to control the state, to which the overriding should happen.
 
+### Overriding numeric sensors
+
+You can add an override numeric value like this:
+
+```yaml
+acme_opentherm_override_numeric_switches:
+    - name: "Enable override DHW temperature"
+      message_id: 56
+      value_on_request: true # Modify value from Thermostat to boiler
+      value_type: 2
+      id: override_dhw_switch
+      acme_opentherm_override_numeric_value:
+        name: "Override DHW temperature"
+        device_class: "Temperature"
+        mode: "Slider"
+        min_value: 30
+        max_value: 60
+        initial_value: 50
+        step: 1
+        id: override_dhw_temperature
+```
+
+#### Configuration variables
+
+- **message_id** (*Required*, positive int): Opentherm Message ID to capture in the sensor
+- **value_type** (*Optional*, positive int range 0-7, default 0): Type of the value to retrieve from the Opentherm message. The types supported are:
+  - **0** *(u16)* unsigned 16 bit integer
+  - **1** *(s16)* signed 16 bit integer
+  - **2** *(f16)* 16 bit float
+  - **3** *(u8LB)* unsigned 8 bit integer in the lower byte of the message data
+  - **4** *(u8HB)* unsigned 8 bit integer in the higher byte of the message data
+  - **5** *(s8LB)* signed 8 bit integer in the lower byte of the message data
+  - **6** *(s8HB)* signed 8 bit integer in the higher byte of the message data
+  - **7** Request or response code of the Opentherm message. The value is directly read from the message. Possible values are:
+    - Master-To-Slave (request)
+      - 0 READ-DATA
+      - 1 WRITE-DATA
+      - 2 INVALID-DATA
+    - Slave-To-Master (response)
+      - 4 READ-ACK
+      - 5 WRITE-ACK
+      - 6 DATA-INVALID
+      - 7 UNKNOWN-DATAID
+- **value_on_request** (*Optional*, boolean, default `True`): If `false`, the value is overriden in the slave (boiler) response message (before sensor value is reported). If `true`, the value is overriden in the master (thermostat) request message (after sensor value is reported).
+- **acme_opentherm_override_numeric_value** (*Required*, Switch): Secondary  control numeric input, to which the overriding should happen.
 
 # Complete configuration
 ```yaml
 external_components:
-  - source: github://Reproduktor/esphome-openthermgw
+  - source: github://klubalo/esphome-openthermgw@main
     components: [ openthermgw ]
+    refresh: 0s
 
 openthermgw:
-  master_in_pin: 19
-  master_out_pin: 17
-  slave_in_pin: 18
-  slave_out_pin: 16
+  master_in_pin: 4
+  master_out_pin: 5
+  slave_in_pin: 12
+  slave_out_pin: 14
   acme_opentherm_sensor_list:
-    - name: "ACME Control setpoint"
+    - name: "Boiler water WSP"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 1
       value_on_request: false
       value_type: 2
-    - name: "ACME ASF flags / OEM Fault code"
-      message_id: 5
-      value_on_request: false
-      value_type: 0
-    - name: "ACME ASF flags / OEM Fault code response"
-      message_id: 5
-      value_on_request: false
-      value_type: 7
-    - name: "ACME Control setpoint 2"
+    - name: "Boiler water WSP2 (none)"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 8
       value_on_request: false
       value_type: 2
-    - name: "ACME OEM diagnostic code"
-      message_id: 115
-      value_on_request: false
-      value_type: 0
-    - name: "ACME OEM diagnostic code response"
-      message_id: 115
-      value_on_request: false
-      value_type: 7
 
-    - name: "ACME Room setpoint"
+    - name: "Boiler maximum flame modulation"
+      device_class: "signal_strength"
+      accuracy_decimals: 0
+      unit_of_measurement: "%"
+      message_id: 14
+      value_on_request: true # Thermostat provides this value, boiler discards it
+      value_type: 2
+    - name: "Room setpoint temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 16
-      value_on_request: false
+      value_on_request: true # Thermostat provides this value, boiler discards it
       value_type: 2
-    - name: "ACME Relative modulation level"
+    - name: "Boiler flame modulation"
       device_class: "signal_strength"
       accuracy_decimals: 0
       unit_of_measurement: "%"
       message_id: 17
       value_on_request: false
       value_type: 2
-    - name: "ACME CH water pressure"
+    - name: "Boiler water pressure (none)"
       device_class: "pressure"
       accuracy_decimals: 2
       unit_of_measurement: "bar"
@@ -230,56 +266,56 @@ openthermgw:
       value_on_request: false
       value_type: 2
 
-    - name: "ACME Room setpoint CH2"
+    - name: "Room setpoint temperature 2 (none)"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 23
       value_on_request: false
       value_type: 2
-    - name: "ACME Room temperature"
+    - name: "Room temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 24
-      value_on_request: false
+      value_on_request: true # Thermostat provides this value, boiler discards it
       value_type: 2
-    - name: "ACME Boiler water temperature"
+    - name: "Boiler water output temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 25
       value_on_request: false
       value_type: 2
-    - name: "ACME DHW temperature"
+    - name: "DHW temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 26
       value_on_request: false
       value_type: 2
-    - name: "ACME Outside temperature"
+    - name: "Outside temperature (boiler)"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 27
       value_on_request: false
       value_type: 2
-    - name: "ACME Return water temperature"
+    - name: "Boiler water input temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 28
       value_on_request: false
       value_type: 2
-    - name: "ACME Flow temperature CH2"
+    - name: "Boiler flow temperature 2 (none)"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
       message_id: 31
       value_on_request: false
       value_type: 2
-    - name: "ACME Exhaust temperature"
+    - name: "Boiler exhaust temperature (none)"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
@@ -287,7 +323,22 @@ openthermgw:
       value_on_request: false
       value_type: 1
 
-    - name: "ACME DHW setpoint"
+    - name: "Minimum temperature DHW setpoint"
+      device_class: "temperature"
+      accuracy_decimals: 0
+      unit_of_measurement: "°C"
+      message_id: 48
+      value_on_request: false
+      value_type: 5
+    - name: "Maximum temperature DHW setpoint"
+      device_class: "temperature"
+      accuracy_decimals: 0
+      unit_of_measurement: "°C"
+      message_id: 48
+      value_on_request: false
+      value_type: 6
+
+    - name: "Setpoint temperature DHW"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
@@ -295,7 +346,7 @@ openthermgw:
       value_on_request: false
       value_type: 2
 
-    - name: "ACME Max CH water setpoint"
+    - name: "Setpoint boiler maximum water output temperature"
       device_class: "temperature"
       accuracy_decimals: 1
       unit_of_measurement: "°C"
@@ -303,50 +354,144 @@ openthermgw:
       value_on_request: false
       value_type: 2
 
+    - name: "Thermostat MemberID code"
+      accuracy_decimals: 0
+      message_id: 2
+      value_on_request: false
+      value_type: 3
+    - name: "Boiler MemberID code"
+      accuracy_decimals: 0
+      message_id: 3
+      value_on_request: false
+      value_type: 3
+    - name: "Thermostrat product type"
+      accuracy_decimals: 0
+      message_id: 126
+      value_on_request: false
+      value_type: 3
+    - name: "Thermostat product version"
+      accuracy_decimals: 0
+      message_id: 126
+      value_on_request: false
+      value_type: 4
+    - name: "Boiler product type"
+      accuracy_decimals: 0
+      message_id: 127
+      value_on_request: false
+      value_type: 3
+    - name: "Boiler product version"
+      accuracy_decimals: 0
+      message_id: 127
+      value_on_request: false
+      value_type: 4
+
   acme_opentherm_binary_sensors:
-    - name: "ACME Boiler fault"
+    - name: "Boiler alarm"
       message_id: 0
       value_on_request: false
       bitindex: 1
-    - name: "ACME Boiler CH mode"
+    - name: "Boiler heating state"
       message_id: 0
       value_on_request: false
       bitindex: 2
-    - name: "ACME Boiler DHW mode"
+    - name: "DHW heating state"
       message_id: 0
       value_on_request: false
       bitindex: 3
-    - name: "ACME Boiler flame status"
+    - name: "Flame"
       message_id: 0
       value_on_request: false
       bitindex: 4
-    - name: "ACME Boiler CH2 mode"
-      message_id: 0
-      value_on_request: false
-      bitindex: 6
-    - name: "ACME Boiler diagnostic indication"
+    - name: "Boiler diagnostic indication"
       message_id: 0
       value_on_request: false
       bitindex: 7
 
-    - name: "ACME Control CH enable"
+    - name: "Enable boiler heating"
       message_id: 0
       value_on_request: false
       bitindex: 9
-    - name: "ACME Control DHW enable"
+    - name: "Enable DHW heating"
       message_id: 0
       value_on_request: false
       bitindex: 10
-    - name: "ACME Control CH2 enable"
-      message_id: 0
-      value_on_request: false
-      bitindex: 13
 
-  acme_opentherm_override_binary_switches:
-    - name: "OT override DHW circulating pump"
-      message_id: 129
-      value_on_request: true
+    - name: "DHW present"
+      message_id: 3
+      value_on_request: false
+      bitindex: 1
+    - name: "Boiler control type"
+      message_id: 3
+      value_on_request: false
+      bitindex: 2
+    - name: "Cooling present"
+      message_id: 3
+      value_on_request: false
+      bitindex: 3
+    - name: "DHW control type"
+      message_id: 3
+      value_on_request: false
       bitindex: 4
+    - name: "Boiler pump control type"
+      message_id: 3
+      value_on_request: false
+      bitindex: 5
+    - name: "Circuit 2 present"
+      message_id: 3
+      value_on_request: false
+      bitindex: 6
+
+  acme_opentherm_override_numeric_switches:
+    - name: "Enable override DHW temperature"
+      message_id: 56
+      value_on_request: true # Modify value from Thermostat to boiler
+      value_type: 2
+      id: override_dhw_switch
+      acme_opentherm_override_numeric_value:
+        name: "Override DHW temperature"
+        device_class: "Temperature"
+        mode: "Slider"
+        min_value: 30
+        max_value: 60
+        initial_value: 50
+        step: 1
+        id: override_dhw_temperature
+    - name: "Enable override room setpoint temperature"
+      message_id: 16
+      value_on_request: false # Modify value from boiler to thermostat
+      value_type: 2
+      id: override_t_set_switch
+      acme_opentherm_override_numeric_value:
+        name: "Override room setpoint temperature"
+        device_class: "Temperature"
+        mode: "Slider"
+        min_value: 5
+        max_value: 35
+        initial_value: 22
+        step: 0.1
+        id: override_t_set_temperature
+  acme_opentherm_override_binary_switches:
+    - name: "Enable override DHW command"
+      value_on_request: true # Modify value from Thermostat to boiler
+      bitindex: 10
+      message_id: 0
       acme_opentherm_override_binary_value:
-        name: "OT override DHW circulating pump with"
+        name: "Override DHW control command"
+    - name: "Enable override boiler heating command"
+      value_on_request: true
+      bitindex: 9
+      message_id: 0
+      acme_opentherm_override_binary_value:
+        name: "Override boiler heating command"
+
+one_wire:
+  - platform: gpio
+    pin: GPIO13
+
+sensor:
+  - platform: dallas_temp
+    name: "Boiler room temperature"
+    resolution: 12
+    update_interval: 60s
+
 ```
