@@ -51,7 +51,7 @@ namespace openthermgw {
             if (requestMessageType == INVALID_DATA)
             {
                 // A data item to be sent by the master may be invalid in a particular application, but may still require to be sent.
-                // In this case the master may use the message type ‘data invalid’.
+                // In this case the master may use the message type "data invalid".
                 ESP_LOGD(TAG, "Opentherm request with INVALID_DATA. [RawData: 0x%x]", request);
             }
             else
@@ -606,13 +606,15 @@ namespace openthermgw {
             this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
             if (!this->pref_.load(&value))
             {
-                if (!std::isnan(this->initial_value_))
-                {
-                    value = this->initial_value_;
-                }
-                else
-                {
-                    value = this->traits.get_min_value();
+                // If no saved value exists, use the configured initial_value
+                // This should always be set from the YAML configuration
+                value = this->initial_value_;
+                
+                // If somehow initial_value_ is still NAN (shouldn't happen with proper config),
+                // fallback to 0 as a safe default
+                if (std::isnan(value)) {
+                    ESP_LOGW(TAG, "SimpleNumber: initial_value is NAN, using 0.0 as fallback");
+                    value = 0.0f;
                 }
             }
         }

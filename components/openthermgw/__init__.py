@@ -1,4 +1,4 @@
-CODEOWNERS = ["@reproduktor/esphome-openthermgw"]
+CODEOWNERS = ["@klubalo/esphome-openthermgw"]
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -7,7 +7,11 @@ from esphome.components import number
 from esphome.automation import maybe_simple_id
 from esphome import pins
 from esphome.const import *
-from esphome.const import CONF_ID, ENTITY_CATEGORY_CONFIG, CONF_NAME
+from esphome.const import (
+    CONF_ID, ENTITY_CATEGORY_CONFIG, CONF_NAME,
+    CONF_MAX_VALUE, CONF_MIN_VALUE, CONF_INITIAL_VALUE, 
+    CONF_RESTORE_VALUE, CONF_STEP, CONF_UNIT_OF_MEASUREMENT
+)
 from esphome.core import coroutine_with_priority
 
 CONF_MASTER_IN_PIN = "master_in_pin"
@@ -102,12 +106,11 @@ CONF_SCHEMA_ACME_OT_OVERRIDE_BINARY_SWITCH = cv.maybe_simple_value(
     )
 
 CONF_SCHEMA_ACME_OT_OVERRIDE_NUMBER = cv.maybe_simple_value(
-    number.NUMBER_SCHEMA.extend(
+    number.number_schema(
+        SimpleNumber,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(
     {
-        cv.GenerateID(): cv.declare_id(SimpleNumber),
-        cv.Optional(
-            CONF_ENTITY_CATEGORY, default=ENTITY_CATEGORY_CONFIG
-        ): cv.entity_category,
         cv.Optional(CONF_MAX_VALUE, default=100): cv.float_,
         cv.Optional(CONF_MIN_VALUE, default=0): cv.float_,
         cv.Optional(CONF_INITIAL_VALUE, default=0): cv.float_,
@@ -118,7 +121,7 @@ CONF_SCHEMA_ACME_OT_OVERRIDE_NUMBER = cv.maybe_simple_value(
         #     single=True
         # ),
     }
-    ).extend(cv.COMPONENT_SCHEMA),
+    ),
     key=CONF_NAME,
 )
 
@@ -203,11 +206,17 @@ async def to_code(config):
         for messagenumoverrideswitch in config[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_SWITCH_LIST]:
             overridenumswitch = await switch.new_switch(messagenumoverrideswitch)
             if CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE in messagenumoverrideswitch:
-                overridenumvalue = await number.new_number(messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE],
-                                                           min_value = messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE][CONF_MIN_VALUE],
-                                                           max_value = messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE][CONF_MAX_VALUE],
-                                                           step = messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE][CONF_STEP],
-                                                          )
+                num_config = messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE]
+                overridenumvalue = cg.new_Pvariable(num_config[CONF_ID])
+                await cg.register_component(overridenumvalue, num_config)
+                await number.register_number(overridenumvalue, num_config, 
+                                            min_value = num_config[CONF_MIN_VALUE],
+                                            max_value = num_config[CONF_MAX_VALUE], 
+                                            step = num_config[CONF_STEP])
+                if CONF_INITIAL_VALUE in num_config:
+                    cg.add(overridenumvalue.set_initial_value(num_config[CONF_INITIAL_VALUE]))
+                if CONF_RESTORE_VALUE in num_config:
+                    cg.add(overridenumvalue.set_restore_value(num_config[CONF_RESTORE_VALUE]))
             cg.add(var.add_override_numeric_switch(overridenumswitch, messagenumoverrideswitch[CONF_SENSOR_ACME_OT_MESSAGE_ID],
                                            messagenumoverrideswitch[CONF_SENSOR_ACME_OT_VALUE_ON_REQUEST],
                                            messagenumoverrideswitch[CONF_SENSOR_ACME_OT_VALUE_TYPE],
