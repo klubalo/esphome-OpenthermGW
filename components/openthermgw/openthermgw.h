@@ -27,12 +27,18 @@ public:
     float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
     Trigger<float> *get_set_trigger() const { return set_trigger_; }
-    void set_initial_value(float initial_value) { initial_value_ = initial_value; }
+    void set_initial_value(float initial_value) { 
+        initial_value_ = initial_value;
+        if (std::isnan(initial_value_)) {
+            ESP_LOGW(TAG, "SimpleNumber: initial_value is NAN, using 0.0 as fallback");
+            initial_value_ = 0.0f;
+        }
+    }
     void set_restore_value(bool restore_value) { this->restore_value_ = restore_value; }
 
  protected:
     void control(float value) override;
-    float initial_value_{NAN};
+    float initial_value_{0.0f};
     bool restore_value_{true};
     Trigger<float> *set_trigger_ = new Trigger<float>();
 

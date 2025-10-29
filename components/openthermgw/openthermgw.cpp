@@ -43,7 +43,7 @@ namespace openthermgw {
         unsigned short       requestDataValue = request & 0xffff;
         bool requestOverride = false;
 
-        ESP_LOGD(TAG, "Opentherm request [MessageType: %s, DataID: %d, Data: 0x%x, status %s]", mOT->messageTypeToString(requestMessageType), requestDataID, requestDataValue, sOT->statusToString(status));
+        ESP_LOGD(TAG, "Req [mt: %s, id: %d, data: 0x%x, st %s]", mOT->messageTypeToString(requestMessageType), requestDataID, requestDataValue, sOT->statusToString(status));
         
         // Check validity of the original request
         if (status != OpenThermResponseStatus::SUCCESS || mOT->parity(request))
@@ -52,12 +52,12 @@ namespace openthermgw {
             {
                 // A data item to be sent by the master may be invalid in a particular application, but may still require to be sent.
                 // In this case the master may use the message type "data invalid".
-                ESP_LOGD(TAG, "Opentherm request with INVALID_DATA. [RawData: 0x%x]", request);
+                ESP_LOGD(TAG, "Req with INVALID_DATA. [Raw: 0x%x]", request);
             }
             else
             {
                 // Discard corrupted request.
-                ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: 0x%x]", request);
+                ESP_LOGD(TAG, "Req with bad parity discarted. [Raw: 0x%x]", request);
                 return;
             }
         }
@@ -185,13 +185,13 @@ namespace openthermgw {
         // Check validity of modified request
         if (requestOverride && !mOT->isValidRequest(request) && (requestMessageType != INVALID_DATA))
         {
-            ESP_LOGD(TAG, "Opentherm request with bad parity discarted. [RawData: 0x%x]", request);
+            ESP_LOGD(TAG, "Req with bad parity discarted. [RawData: 0x%x]", request);
             return;
         }
 
         if (requestOverride)
         {
-            ESP_LOGD(TAG, "Opentherm request override [MessageType: %s, DataID: %d, Data: 0x%x]", mOT->messageTypeToString(mOT->getMessageType(request)), mOT->getDataID(request), request & 0xffff);
+            ESP_LOGD(TAG, "Req override [MessageType: %s, DataID: %d, Data: 0x%x]", mOT->messageTypeToString(mOT->getMessageType(request)), mOT->getDataID(request), request & 0xffff);
         }
 
         // Send the request
@@ -206,7 +206,7 @@ namespace openthermgw {
             unsigned long        responseOrg = response;
             bool                 responseOverride = false;
 
-            ESP_LOGD(TAG, "Opentherm response [MessageType: %s, DataID: %d, Data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
+            ESP_LOGD(TAG, "Resp [mt: %s, id: %d, data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
 
             // Override numeric on response (Replace value received from boiler)
             auto itNumericOverrideList = override_numeric_switch_map.find(requestDataID);
@@ -281,7 +281,7 @@ namespace openthermgw {
                 }
                 else
                 {
-                    ESP_LOGD(TAG, "Opentherm response override [MessageType: %s, DataID: %d, Data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
+                    ESP_LOGD(TAG, "Resp override [MessageType: %s, DataID: %d, Data: 0x%x]", sOT->messageTypeToString(responseMessageType), responseDataID, response & 0xffff);
                 }
             }
 
@@ -290,7 +290,7 @@ namespace openthermgw {
             // only if ACK reponse is received, process the data.
             if (sOT->isValidResponse(response))
             {
-                ESP_LOGD(TAG, "Opentherm response valid, processing sensors...");
+                ESP_LOGD(TAG, "Resp valid, processing.");
 
                 // Process numeric value on response  (Set value received from boiler)
                 auto itSensorList = acme_sensor_map.find(responseDataID);
@@ -372,12 +372,12 @@ namespace openthermgw {
             }
             else
             {
-                ESP_LOGD(TAG, "Opentherm response invalid.");
+                ESP_LOGD(TAG, "Resp invalid.");
             }
         }
         else
         {
-            ESP_LOGD(TAG, "Opentherm - no response or bad parity");
+            ESP_LOGD(TAG, "No response or bad parity");
         }
     }
 
@@ -564,7 +564,14 @@ namespace openthermgw {
 
     void OverrideBinarySwitch::setup()
     {
-        this->state = this->get_initial_state_with_restore_mode().value_or(false);
+        auto restored = this->get_initial_state_with_restore_mode();
+        if (restored.has_value()) {
+            this->state = *restored;
+            this->publish_state(this->state);
+        } else {
+            this->state = false;
+            this->publish_state(false);
+        }
     }
 
     void OverrideBinarySwitch::write_state(bool state)
@@ -584,7 +591,14 @@ namespace openthermgw {
 
     void SimpleSwitch::setup()
     {
-        this->state = this->get_initial_state_with_restore_mode().value_or(false);
+        auto restored = this->get_initial_state_with_restore_mode();
+        if (restored.has_value()) {
+            this->state = *restored;
+            this->publish_state(this->state);
+        } else {
+            this->state = false;
+            this->publish_state(false);
+        }
     }
 
     void SimpleSwitch::write_state(bool s)
@@ -596,39 +610,54 @@ namespace openthermgw {
 
     void SimpleNumber::setup()
     {
-        float value;
-        if (!this->restore_value_)
+        float value = this->initial_value_;
+        
+        if (this->restore_value_)
         {
-            value = this->initial_value_;
-        }
-        else
-        {
-            this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
-            if (!this->pref_.load(&value))
+            uint32_t hash = fnv1_hash(this->get_name());
+            this->pref_ = global_preferences->make_preference<float>(hash);
+            
+            float restored_value;
+            if (this->pref_.load(&restored_value))
             {
-                // If no saved value exists, use the configured initial_value
-                // This should always be set from the YAML configuration
-                value = this->initial_value_;
-                
-                // If somehow initial_value_ is still NAN (shouldn't happen with proper config),
-                // fallback to 0 as a safe default
-                if (std::isnan(value)) {
-                    ESP_LOGW(TAG, "SimpleNumber: initial_value is NAN, using 0.0 as fallback");
-                    value = 0.0f;
+                // Validate restored value
+                if (!std::isnan(restored_value) && 
+                    !std::isinf(restored_value) && 
+                    restored_value >= this->traits.get_min_value() && 
+                    restored_value <= this->traits.get_max_value())
+                {
+                    value = restored_value;
+                }
+                else
+                {
+                    // Corrupted value in flash, overwrite with default
+                    this->pref_.save(&this->initial_value_);
                 }
             }
         }
+        
         this->publish_state(value);
     }
 
     void SimpleNumber::control(float value)
     {
+        // Reject invalid values immediately
+        if (std::isnan(value) || std::isinf(value) || 
+            value < this->traits.get_min_value() || 
+            value > this->traits.get_max_value())
+        {
+            return;
+        }
+        
         this->set_trigger_->trigger(value);
-
         this->publish_state(value);
 
         if (this->restore_value_)
+        {
+            uint32_t hash = fnv1_hash(this->get_name());
+            this->pref_ = global_preferences->make_preference<float>(hash);
             this->pref_.save(&value);
+        }
     }
 
     void SimpleNumber::dump_config() { LOG_NUMBER("", "Simple Number", this); }

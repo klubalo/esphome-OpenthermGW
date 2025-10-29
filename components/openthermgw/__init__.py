@@ -195,6 +195,7 @@ async def to_code(config):
     if CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_SWITCH_LIST in config:
         for messageoverrideswitch in config[CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_SWITCH_LIST]:
             overrideswitch = await switch.new_switch(messageoverrideswitch)
+            overridevalue = None
             if CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_VALUE in messageoverrideswitch:
                 overridevalue = await switch.new_switch(messageoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_VALUE])
             cg.add(var.add_override_switch(overrideswitch, messageoverrideswitch[CONF_SENSOR_ACME_OT_MESSAGE_ID],
@@ -205,6 +206,7 @@ async def to_code(config):
     if CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_SWITCH_LIST in config:
         for messagenumoverrideswitch in config[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_SWITCH_LIST]:
             overridenumswitch = await switch.new_switch(messagenumoverrideswitch)
+            overridenumvalue = None
             if CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE in messagenumoverrideswitch:
                 num_config = messagenumoverrideswitch[CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE]
                 overridenumvalue = cg.new_Pvariable(num_config[CONF_ID])
