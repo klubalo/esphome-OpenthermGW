@@ -40,6 +40,7 @@ namespace openthermgw {
     {
         OpenThermMessageID   requestDataID = mOT->getDataID(request);
         OpenThermMessageType requestMessageType = mOT->getMessageType(request);
+        OpenThermMessageType originalRequestMessageType = requestMessageType;
         unsigned short       requestDataValue = request & 0xffff;
         bool requestOverride = false;
 
@@ -157,7 +158,13 @@ namespace openthermgw {
                         request = mOT->buildRequest(requestMessageType, requestDataID, newbitfield);
                         requestOverride = true;
                     }
-
+                    
+                    if (pOverride->forceWrite && requestMessageType == READ_DATA)
+                    {
+                        requestMessageType = WRITE_DATA;
+                        request = mOT->buildRequest(requestMessageType, requestDataID, request & 0xffff);
+                        requestOverride = true;
+                    }
                 }
             }
         }
@@ -176,6 +183,13 @@ namespace openthermgw {
                     if(origdata != newdata)
                     {
                         request = mOT->buildRequest(requestMessageType, requestDataID, newdata);
+                        requestOverride = true;
+                    }
+                    
+                    if (pOverride->forceWrite && requestMessageType == READ_DATA)
+                    {
+                        requestMessageType = WRITE_DATA;
+                        request = mOT->buildRequest(requestMessageType, requestDataID, request & 0xffff);
                         requestOverride = true;
                     }
                 }
@@ -272,6 +286,13 @@ namespace openthermgw {
                 }
 
                 response = sOT->buildResponse(responseMessageType, responseDataID, response & 0xffff);
+
+                // If original request was READ_DATA and we forced WRITE_DATA, convert WRITE_ACK back to READ_ACK
+                if (originalRequestMessageType == READ_DATA && requestMessageType == WRITE_DATA && responseMessageType == WRITE_ACK)
+                {
+                    responseMessageType = READ_ACK;
+                    response = sOT->buildResponse(responseMessageType, responseDataID, response & 0xffff);
+                }
 
                 // check validity of modified response
                 if(!sOT->isValidResponse(response))
@@ -488,12 +509,13 @@ namespace openthermgw {
         pSensorList->push_back(pAcmeBinarySensorInfo);
     }
 
-    void OpenthermGW::add_override_switch(openthermgw::OverrideBinarySwitch *s, int messageid, bool valueonrequest, int bit, openthermgw::SimpleSwitch *v)
+    void OpenthermGW::add_override_switch(openthermgw::OverrideBinarySwitch *s, int messageid, bool valueonrequest, int bit, bool forcewrite, openthermgw::SimpleSwitch *v)
     {
         OverrideBinarySwitchInfo *pOverrideBinarySwitchInfo = new OverrideBinarySwitchInfo();
         pOverrideBinarySwitchInfo->messageID = messageid;
         pOverrideBinarySwitchInfo->valueOnRequest = valueonrequest;
         pOverrideBinarySwitchInfo->bit = bit;
+        pOverrideBinarySwitchInfo->forceWrite = forcewrite;
         pOverrideBinarySwitchInfo->binaryswitch = s;
         pOverrideBinarySwitchInfo->valueswitch = v;
 
@@ -506,12 +528,13 @@ namespace openthermgw {
         pSwitchList->push_back(pOverrideBinarySwitchInfo);
     }
 
-    void OpenthermGW::add_override_numeric_switch(openthermgw::OverrideBinarySwitch *s, int messageid, bool valueonrequest, int valuetype, openthermgw::SimpleNumber *v)
+    void OpenthermGW::add_override_numeric_switch(openthermgw::OverrideBinarySwitch *s, int messageid, bool valueonrequest, int valuetype, bool forcewrite, openthermgw::SimpleNumber *v)
     {
         OverrideNumericSwitchInfo *pOverrideNumericSwitchInfo = new OverrideNumericSwitchInfo();
         pOverrideNumericSwitchInfo->messageID = messageid;
         pOverrideNumericSwitchInfo->valueOnRequest = valueonrequest;
         pOverrideNumericSwitchInfo->valueType = valuetype;
+        pOverrideNumericSwitchInfo->forceWrite = forcewrite;
         pOverrideNumericSwitchInfo->binaryswitch = s;
         pOverrideNumericSwitchInfo->valuenumber = v;
 

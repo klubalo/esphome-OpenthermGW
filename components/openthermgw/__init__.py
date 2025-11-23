@@ -89,6 +89,7 @@ CONF_SCHEMA_SIMPLE_SWITCH = cv.maybe_simple_value(
 
 CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_SWITCH_LIST = "acme_opentherm_override_binary_switches"
 CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_VALUE = "acme_opentherm_override_binary_value"
+CONF_FORCE_WRITE = "force_write"
 CONF_SCHEMA_ACME_OT_OVERRIDE_BINARY_SWITCH = cv.maybe_simple_value(
     switch.switch_schema(
         OverrideBinarySwitch,
@@ -99,6 +100,7 @@ CONF_SCHEMA_ACME_OT_OVERRIDE_BINARY_SWITCH = cv.maybe_simple_value(
                 cv.Required(CONF_SENSOR_ACME_OT_MESSAGE_ID): cv.positive_int,
                 cv.Optional(CONF_SENSOR_ACME_OT_VALUE_ON_REQUEST, default='true'): cv.boolean,
                 cv.Required(CONF_SENSOR_ACME_OT_BINARY_BIT): cv.int_range(1, 16), #1-16 bit index
+                cv.Optional(CONF_FORCE_WRITE, default=False): cv.boolean,
                 cv.Required(CONF_SENSOR_ACME_OT_OVERRIDE_BINARY_VALUE): CONF_SCHEMA_SIMPLE_SWITCH,
             }
         ),
@@ -137,6 +139,7 @@ CONF_SCHEMA_ACME_OT_OVERRIDE_NUMERIC_SWITCH = cv.maybe_simple_value(
                 cv.Required(CONF_SENSOR_ACME_OT_MESSAGE_ID): cv.positive_int,
                 cv.Optional(CONF_SENSOR_ACME_OT_VALUE_ON_REQUEST, default='true'): cv.boolean,
                 cv.Optional(CONF_SENSOR_ACME_OT_VALUE_TYPE, default=0): cv.int_range(0, 6), # 0=u16, 1=s16, 2=f16, 3=u8LB, 4=u8HB, 5=s8LB, 6=s8HB
+                cv.Optional(CONF_FORCE_WRITE, default=False): cv.boolean,
                 cv.Required(CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_VALUE): CONF_SCHEMA_ACME_OT_OVERRIDE_NUMBER,
             }
         ),
@@ -201,6 +204,7 @@ async def to_code(config):
             cg.add(var.add_override_switch(overrideswitch, messageoverrideswitch[CONF_SENSOR_ACME_OT_MESSAGE_ID],
                                            messageoverrideswitch[CONF_SENSOR_ACME_OT_VALUE_ON_REQUEST],
                                            messageoverrideswitch[CONF_SENSOR_ACME_OT_BINARY_BIT],
+                                           messageoverrideswitch[CONF_FORCE_WRITE],
                                            overridevalue))
 
     if CONF_SENSOR_ACME_OT_OVERRIDE_NUMERIC_SWITCH_LIST in config:
@@ -222,6 +226,7 @@ async def to_code(config):
             cg.add(var.add_override_numeric_switch(overridenumswitch, messagenumoverrideswitch[CONF_SENSOR_ACME_OT_MESSAGE_ID],
                                            messagenumoverrideswitch[CONF_SENSOR_ACME_OT_VALUE_ON_REQUEST],
                                            messagenumoverrideswitch[CONF_SENSOR_ACME_OT_VALUE_TYPE],
+                                           messagenumoverrideswitch[CONF_FORCE_WRITE],
                                            overridenumvalue))
 
 
